@@ -1,14 +1,15 @@
-version: '3.8'
+version: '3.9'
 services:
   localstack:
     container_name: "q_sqs-localstack_main"
     image: localstack/localstack:2.0.1
     ports:
-      - "127.0.0.1:4566:4566"            # LocalStack Gateway
-      - "127.0.0.1:4510-4559:4510-4559"  # external services port range
+      - "4566:4566"            # LocalStack Gateway
+      - "4571:4571"  # external services port range
     environment:
       - DEBUG=${DEBUG-}
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - SERVICES=sqs
     volumes:
       - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
       - "/var/run/docker.sock:/var/run/docker.sock"

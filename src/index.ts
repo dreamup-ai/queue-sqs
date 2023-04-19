@@ -7,8 +7,10 @@ import {
   ListQueuesCommand,
   GetQueueUrlCommand,
   DeleteQueueCommand,
+  QueueAttributeName,
+  GetQueueAttributesCommand,
 } from "@aws-sdk/client-sqs";
-import { IQueueManager, IQueue, IQueueMessage } from "interfaces";
+import { IQueueManager, IQueue, IQueueMessage, QueueOptions } from "interfaces";
 
 const { AWS_REGION, AWS_DEFAULT_REGION, SQS_ENDPOINT } = process.env;
 
@@ -18,11 +20,67 @@ const sqs = new SQSClient({
 });
 
 export class QueueManager implements IQueueManager {
-  async createQueue(queueName: string): Promise<IQueue> {
+  async createQueue(
+    queueName: string,
+    opts: QueueOptions = {}
+  ): Promise<Queue> {
     try {
+      const Attributes: { [K in QueueAttributeName]?: string } = {};
+
+      if (opts.visibilityTimeoutSeconds) {
+        Attributes.VisibilityTimeout = opts.visibilityTimeoutSeconds.toString();
+      }
+
+      if (opts.fifo || queueName.endsWith(".fifo")) {
+        Attributes.FifoQueue = "true";
+        if (!queueName.endsWith(".fifo")) {
+          queueName += ".fifo";
+        }
+      }
+
+      if (opts.delaySeconds) {
+        Attributes.DelaySeconds = opts.delaySeconds.toString();
+      }
+
+      if (opts.deadLetterQueue) {
+        try {
+          const dlq = await this.getQueue(opts.deadLetterQueue);
+          const { Attributes } = await sqs.send(
+            new GetQueueAttributesCommand({
+              QueueUrl: dlq.getUrl(),
+              AttributeNames: ["QueueArn"],
+            })
+          );
+          if (!Attributes || !Attributes.QueueArn) {
+            throw new Error("Queue ARN not found");
+          }
+          Attributes.RedrivePolicy = JSON.stringify({
+            deadLetterTargetArn: Attributes.QueueArn,
+            maxReceiveCount: opts.maxReceiveCount || 1,
+          });
+        } catch (e: any) {
+          throw new Error(`Dead letter queue not found: ${e.message}`);
+        }
+      }
+
+      if (opts.encrypted) {
+        Attributes.SqsManagedSseEnabled = "true";
+      }
+
+      if (opts.messageRetentionSeconds) {
+        Attributes.MessageRetentionPeriod =
+          opts.messageRetentionSeconds.toString();
+      }
+
+      if (opts.receiveMessageWaitTimeSeconds) {
+        Attributes.ReceiveMessageWaitTimeSeconds =
+          opts.receiveMessageWaitTimeSeconds.toString();
+      }
+
       const result = await sqs.send(
         new CreateQueueCommand({
           QueueName: queueName,
+          Attributes,
         })
       );
       if (result.QueueUrl) {
@@ -35,7 +93,7 @@ export class QueueManager implements IQueueManager {
     }
   }
 
-  async getQueue(queueName: string): Promise<IQueue> {
+  async getQueue(queueName: string): Promise<Queue> {
     try {
       const result = await sqs.send(
         new GetQueueUrlCommand({
@@ -52,7 +110,7 @@ export class QueueManager implements IQueueManager {
     }
   }
 
-  async listQueues(prefix?: string): Promise<IQueue[]> {
+  async listQueues(prefix?: string): Promise<Queue[]> {
     try {
       const urls = [];
       let nextToken: string | undefined;
@@ -147,6 +205,10 @@ export class Queue implements IQueue {
     } catch (e: any) {
       throw e;
     }
+  }
+
+  getUrl(): string {
+    return this.url;
   }
 }
 

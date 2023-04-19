@@ -17,11 +17,55 @@ const sqs = new client_sqs_1.SQSClient({
     endpoint: SQS_ENDPOINT,
 });
 class QueueManager {
-    createQueue(queueName) {
+    createQueue(queueName, opts = {}) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
+                const Attributes = {};
+                if (opts.visibilityTimeoutSeconds) {
+                    Attributes.VisibilityTimeout = opts.visibilityTimeoutSeconds.toString();
+                }
+                if (opts.fifo || queueName.endsWith(".fifo")) {
+                    Attributes.FifoQueue = "true";
+                    if (!queueName.endsWith(".fifo")) {
+                        queueName += ".fifo";
+                    }
+                }
+                if (opts.delaySeconds) {
+                    Attributes.DelaySeconds = opts.delaySeconds.toString();
+                }
+                if (opts.deadLetterQueue) {
+                    try {
+                        const dlq = yield this.getQueue(opts.deadLetterQueue);
+                        const { Attributes } = yield sqs.send(new client_sqs_1.GetQueueAttributesCommand({
+                            QueueUrl: dlq.getUrl(),
+                            AttributeNames: ["QueueArn"],
+                        }));
+                        if (!Attributes || !Attributes.QueueArn) {
+                            throw new Error("Queue ARN not found");
+                        }
+                        Attributes.RedrivePolicy = JSON.stringify({
+                            deadLetterTargetArn: Attributes.QueueArn,
+                            maxReceiveCount: opts.maxReceiveCount || 1,
+                        });
+                    }
+                    catch (e) {
+                        throw new Error(`Dead letter queue not found: ${e.message}`);
+                    }
+                }
+                if (opts.encrypted) {
+                    Attributes.SqsManagedSseEnabled = "true";
+                }
+                if (opts.messageRetentionSeconds) {
+                    Attributes.MessageRetentionPeriod =
+                        opts.messageRetentionSeconds.toString();
+                }
+                if (opts.receiveMessageWaitTimeSeconds) {
+                    Attributes.ReceiveMessageWaitTimeSeconds =
+                        opts.receiveMessageWaitTimeSeconds.toString();
+                }
                 const result = yield sqs.send(new client_sqs_1.CreateQueueCommand({
                     QueueName: queueName,
+                    Attributes,
                 }));
                 if (result.QueueUrl) {
                     return new Queue(queueName, result.QueueUrl);
@@ -137,6 +181,9 @@ class Queue {
                 throw e;
             }
         });
+    }
+    getUrl() {
+        return this.url;
     }
 }
 exports.Queue = Queue;
